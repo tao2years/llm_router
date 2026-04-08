@@ -1,0 +1,14 @@
+{
+  "name": "llm-router",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "install:all": "cd proxy && npm install && cd ../web && npm install",
+    "dev": "concurrently --names \"PROXY,WEB\" --prefix-colors \"cyan,magenta\" \"cd proxy && npm run dev\" \"cd web && npm run dev\"",
+    "dev:proxy": "cd proxy && npm run dev",
+    "dev:web": "cd web && npm run dev"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}

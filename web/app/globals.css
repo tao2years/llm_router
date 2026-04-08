@@ -1,0 +1,40 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html, body {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  background: #030712;
+  color: #f1f5f9;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #475569; }
+
+/* JSON viewer */
+.json-key   { color: #93c5fd; }
+.json-str   { color: #86efac; }
+.json-num   { color: #fde68a; }
+.json-bool  { color: #f97316; }
+.json-null  { color: #f87171; }
+
+/* Tool call block */
+.tool-use-block {
+  @apply bg-violet-900/30 border border-violet-500/30 rounded-md p-3 my-2;
+}
+.tool-result-block {
+  @apply bg-purple-900/20 border border-purple-500/20 rounded-md p-3 my-2;
+}

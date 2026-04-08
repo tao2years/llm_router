@@ -1,0 +1,22 @@
+node_modules/
+
+# Next.js
+web/.next/
+web/out/
+web/tsconfig.tsbuildinfo
+
+# Local env (API URLs, secrets)
+.env
+.env.local
+.env.*.local
+
+# Proxy SQLite (runtime traces)
+proxy/data/*.db
+proxy/data/*.db-shm
+proxy/data/*.db-wal
+
+# Local editor / agent settings
+.claude/settings.local.json
+
+.DS_Store
+Thumbs.db

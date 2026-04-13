@@ -9,26 +9,43 @@ LLM Router Trace Viewer — a debugging proxy that intercepts LLM API requests f
 ## Monorepo Structure
 
 Two packages with separate `package.json` and `tsconfig.json`:
+
 - `proxy/` — Express.js proxy server (Node.js, CommonJS, TypeScript → `dist/`)
 - `web/` — Next.js 15 + React 19 trace viewer (browser/ESM TypeScript)
+
+## Configuration
+
+The proxy **requires** the `LLM_UPSTREAM_URL` environment variable (base URL of the upstream LLM API, no trailing slash required). Anthropic traffic is sent to `{UPSTREAM_URL}/v1/messages`; OpenAI-style traffic to `{UPSTREAM_URL}/v1/chat/completions`. Request headers from the agent (including auth) are forwarded except hop-by-hop fields (`host`, `content-length`, `connection`).
+
+Example:
+
+```bash
+set LLM_UPSTREAM_URL=https://api.example.com
+```
 
 ## Commands
 
 ### Setup
+
 ```bash
 npm run install:all   # Install deps in both proxy/ and web/
 ```
 
 ### Development
+
 ```bash
 npm run dev           # Run both proxy + web concurrently (recommended)
 npm run dev:proxy     # Proxy only (ts-node-dev, hot reload)
 npm run dev:web       # Web UI only (Next.js, port 3000)
 ```
 
-### Production
+### Per-package (proxy / web)
+
 ```bash
-cd proxy && npm run build && npm start   # Compile TS → dist/, then run
+cd proxy && npm run dev    # ts-node-dev with hot reload
+cd proxy && npm run build && npm start
+
+cd web && npm run dev      # Next.js dev on :3000
 cd web && npm run build && npm start
 ```
 
@@ -46,29 +63,48 @@ No test runner or linter is configured. TypeScript strict mode serves as the pri
 
 ## Architecture
 
+### Request flow
+
+```
+Code Agents (Claude Code :7878, Free Code :7879, Test Code :7880)
+  → proxyHandler.ts    (protocol-specific path under LLM_UPSTREAM_URL, forwards headers/body)
+  → upstream LLM       (Anthropic /v1/messages or OpenAI /v1/chat/completions)
+  → streamAssembler.ts (reassembles SSE into complete JSON for traces)
+  → db.ts              (SQLite: sessions + traces; session key = agent + client identity)
+  → broadcast.ts       (SSE push to web clients)
+  → web UI             (sessions / traces / detail)
+```
+
 ### Proxy (`proxy/src/`)
 
-- **`index.ts`** — Starts 3 proxy servers + 1 API server
-- **`config.ts`** — Agent configs, Volcano API credentials, port/model constants; all upstream requests go to the Volcano API (glm-4.7 model)
-- **`proxyHandler.ts`** — Core interception logic: adapts Anthropic/OpenAI protocol, forwards to Volcano, pipes response back to client, triggers trace storage
-- **`streamAssembler.ts`** — Reassembles chunked SSE streams (both Anthropic and OpenAI formats) into complete request/response objects before storing
-- **`db.ts`** — SQLite (better-sqlite3, WAL mode) schema + CRUD; tracks active session per agent with 10-minute inactivity timeout
-- **`apiServer.ts`** — REST endpoints (`/api/sessions`, `/api/traces`, `/api/traces/:id`) + SSE endpoint (`/api/events`) that pushes `new_trace` events to Web UI
-- **`broadcast.ts`** — Manages SSE client connections; called by proxyHandler after each trace is stored
+| File | Role |
+|------|------|
+| `index.ts` | Starts 3 proxy servers + API server; logs configured `UPSTREAM_URL` |
+| `config.ts` | `LLM_UPSTREAM_URL` → `UPSTREAM_URL`, agent ports/protocols, API port |
+| `proxyHandler.ts` | Core proxy: builds upstream URL, forwards requests, streams responses, records traces |
+| `streamAssembler.ts` | Reassembles Anthropic/OpenAI SSE into structured JSON before persistence |
+| `db.ts` | SQLite (WAL); sessions include `client_ip`; `getOrCreateSessionId(agent, clientKey)` with 10‑min idle timeout |
+| `apiServer.ts` | REST (`/api/sessions`, `/api/traces`, …) + SSE `/api/events` (`new_trace`) |
+| `broadcast.ts` | SSE client registry; invoked after each stored trace |
+
+Database file: `proxy/data/traces.db` (gitignored, created on startup). Existing DBs are migrated if `client_ip` is missing.
+
+**Session grouping**: Same `agent` + same client identity within 10 minutes → same session. Client identity is the `x-session-tag` header if set, otherwise the client IP (supports multiple machines or instances on one proxy port).
 
 ### Web (`web/`)
 
-- **`app/page.tsx`** — Three-panel layout: session sidebar → trace list → trace detail; connects to `/api/events` SSE for real-time updates
-- **`lib/types.ts`** — Shared TypeScript interfaces (`Session`, `Trace`, etc.) used across all components
-- **`lib/exportTraceMessages.ts`** — Normalizes Anthropic and OpenAI traces to a unified OpenAI Chat format for export/training
-- **`components/`** — `SessionSidebar`, `TraceList`, `TraceDetail` (5-tab viewer), `MessageViewer` (renders tool use blocks), `ResponseViewer` (protocol-aware)
+- **`app/page.tsx`** — Three-panel layout: session sidebar → trace list → trace detail; subscribes to `/api/events` for live updates
+- **`lib/api.ts`** — HTTP client and `EventSource` for SSE
+- **`lib/types.ts`** — Shared interfaces (`Session` includes `client_ip`, `Trace`, etc.)
+- **`lib/exportTraceMessages.ts`** — Normalizes traces to a unified chat format for export
+- **`components/`** — `SessionSidebar` (shows client tag/IP when present), `TraceList`, `TraceDetail`, `MessageViewer`, `ResponseViewer`
 
-### Key Design Decisions
+### Key design decisions
 
-- Both Anthropic and OpenAI protocols are supported on separate ports but all upstream traffic goes to one Volcano API endpoint. Protocol detection is port-based, not header-based.
-- Streaming responses are fully buffered in `streamAssembler.ts` before trace storage — the client still receives chunks in real time, but the stored trace is the complete assembled response.
-- Session identity is per-agent, time-bounded (10 min idle = new session), stored in-memory in `db.ts`.
-- SSE (`/api/events`) is the only push channel; the Web UI does not poll.
+- Anthropic vs OpenAI handling is **port-based** (7878/7879 vs 7880), not inferred from headers alone.
+- Streaming: agents still receive chunks in real time; traces store the **assembled** full response from `streamAssembler.ts`.
+- Push updates use SSE only (`/api/events`); the UI does not poll for new traces.
+- Stub `GET /v1/models` returns an empty model list unless extended.
 
 ## Connecting Code Agents
 
@@ -76,7 +112,9 @@ No test runner or linter is configured. TypeScript strict mode serves as the pri
 # Claude Code
 claude config set apiBaseUrl http://localhost:7878
 
-# Free Code / Trae — set API Base URL to http://localhost:7879
+# Free Code / Trae — API Base URL http://localhost:7879
 
-# Test Code (OpenAI-compatible) — set API Base URL to http://localhost:7880
+# Test Code (OpenAI-compatible) — http://localhost:7880
 ```
+
+Optional: send header `x-session-tag: <unique-id>` to separate sessions when multiple clients share one IP.

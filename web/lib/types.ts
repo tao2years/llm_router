@@ -1,6 +1,7 @@
 export interface Session {
   id: string;
   agent: string;
+  client_ip: string;
   created_at: number;
   updated_at: number;
   trace_count: number;

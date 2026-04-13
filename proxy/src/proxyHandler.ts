@@ -39,7 +39,12 @@ function buildRequestHeaders(
 
 async function handleProxy(req: Request, res: Response, cfg: AgentConfig): Promise<void> {
   const startTime = Date.now();
-  const sessionId = getOrCreateSessionId(cfg.name);
+  // Prefer an explicit tag (useful for same-machine multi-instance setups),
+  // fall back to the client's IP address so different machines are separated.
+  const clientKey = (req.headers['x-session-tag'] as string | undefined)
+    ?? req.socket.remoteAddress
+    ?? 'unknown';
+  const sessionId = getOrCreateSessionId(cfg.name, clientKey);
 
   const requestBody: Record<string, unknown> = { ...(req.body as Record<string, unknown>), model: DEFAULT_MODEL };
   const isStreaming = requestBody.stream === true;

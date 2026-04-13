@@ -14,6 +14,12 @@ interface Props {
   connected: boolean;
 }
 
+function formatClientIp(ip: string): string {
+  if (!ip) return '';
+  // Strip IPv4-mapped IPv6 prefix (::ffff:x.x.x.x → x.x.x.x)
+  return ip.replace(/^::ffff:/, '');
+}
+
 function timeAgo(ts: number): string {
   const diff = Date.now() - ts;
   if (diff < 60_000) return `${Math.round(diff / 1000)}s ago`;
@@ -106,6 +112,13 @@ export default function SessionSidebar({
                     {session.trace_count}
                   </span>
                 </div>
+                {session.client_ip && (
+                  <div className="mt-0.5">
+                    <span className="text-xs text-gray-500 font-mono truncate block">
+                      {formatClientIp(session.client_ip)}
+                    </span>
+                  </div>
+                )}
                 <div className="flex items-center justify-between mt-0.5">
                   <span className="text-xs text-gray-600">{timeAgo(session.updated_at)}</span>
                   <button

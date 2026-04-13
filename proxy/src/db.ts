@@ -23,6 +23,7 @@ function initSchema(db: Database.Database): void {
     CREATE TABLE IF NOT EXISTS sessions (
       id          TEXT    PRIMARY KEY,
       agent       TEXT    NOT NULL,
+      client_ip   TEXT    NOT NULL DEFAULT '',
       created_at  INTEGER NOT NULL,
       updated_at  INTEGER NOT NULL,
       trace_count INTEGER NOT NULL DEFAULT 0
@@ -53,6 +54,13 @@ function initSchema(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_traces_agent     ON traces(agent);
     CREATE INDEX IF NOT EXISTS idx_traces_timestamp ON traces(timestamp DESC);
   `);
+
+  // Migrate existing databases that don't have client_ip yet
+  try {
+    db.exec(`ALTER TABLE sessions ADD COLUMN client_ip TEXT NOT NULL DEFAULT ''`);
+  } catch {
+    // Column already exists — ignore
+  }
 }
 
 // ────────── session tracking ──────────
@@ -65,18 +73,24 @@ interface SessionActivity {
 const activityMap = new Map<string, SessionActivity>();
 const SESSION_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
 
-export function getOrCreateSessionId(agent: string): string {
+/**
+ * clientKey = x-session-tag header value (if provided) or the client's IP address.
+ * This ensures different machines / workspaces each get their own session even when
+ * they all point at the same proxy port.
+ */
+export function getOrCreateSessionId(agent: string, clientKey: string): string {
+  const mapKey = `${agent}:${clientKey}`;
   const now = Date.now();
-  const prev = activityMap.get(agent);
+  const prev = activityMap.get(mapKey);
   if (prev && now - prev.lastTime < SESSION_TIMEOUT_MS) {
     prev.lastTime = now;
     return prev.sessionId;
   }
   const id = uuidv4();
   getDb().prepare(
-    `INSERT INTO sessions (id, agent, created_at, updated_at, trace_count) VALUES (?, ?, ?, ?, 0)`
-  ).run(id, agent, now, now);
-  activityMap.set(agent, { sessionId: id, lastTime: now });
+    `INSERT INTO sessions (id, agent, client_ip, created_at, updated_at, trace_count) VALUES (?, ?, ?, ?, ?, 0)`
+  ).run(id, agent, clientKey, now, now);
+  activityMap.set(mapKey, { sessionId: id, lastTime: now });
   return id;
 }
 
